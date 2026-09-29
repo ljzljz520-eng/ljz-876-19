@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ExamController;
 use App\Http\Controllers\Api\ExamPaperController;
+use App\Http\Controllers\Api\MonitoringController;
 use App\Http\Controllers\Api\QuestionController;
 use App\Http\Controllers\Api\ScoreController;
 use Illuminate\Support\Facades\Route;
@@ -42,9 +43,25 @@ Route::middleware(['api', 'auth:sanctum', 'throttle:60,1'])->group(function () {
         Route::get('/', [ExamController::class, 'index']);
         Route::post('/{examPaper}/start', [ExamController::class, 'start']);
         Route::get('/{examPaper}/questions', [ExamController::class, 'getQuestions']);
+        // 断网续考保护：刷新/断网恢复/换设备后拉取考试现场
+        Route::post('/{examPaper}/resume', [ExamController::class, 'resume']);
+        // 在线心跳（约15s一次），用于服务端甄别真实断网
+        Route::post('/{examPaper}/heartbeat', [ExamController::class, 'heartbeat']);
+        // 断网开始/页面隐藏等事件上报；离线期间事件缓存后批量补报
+        Route::post('/{examPaper}/events', [ExamController::class, 'reportEvents']);
+        // 在线自动保存 & 断网恢复后答案同步
+        Route::post('/{examPaper}/sync-answers', [ExamController::class, 'syncAnswers']);
         Route::post('/{examPaper}/submit', [ExamController::class, 'submit']);
         Route::get('/records', [ExamController::class, 'myRecords']);
         Route::get('/records/{record}', [ExamController::class, 'showRecord']);
+    });
+
+    // 监考：断网/刷新/换设备甄别与延时审批
+    Route::prefix('monitoring')->group(function () {
+        Route::get('/records', [MonitoringController::class, 'index']);
+        Route::get('/records/{record}', [MonitoringController::class, 'show']);
+        Route::post('/records/{record}/extend', [MonitoringController::class, 'extend']);
+        Route::post('/records/{record}/terminate', [MonitoringController::class, 'terminate']);
     });
 
     Route::prefix('scores')->group(function () {

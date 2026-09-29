@@ -15,6 +15,9 @@ class ExamRecordAnswer extends Model
         'answer',
         'is_correct',
         'score',
+        'client_updated_at',
+        'synced_at',
+        'meta',
     ];
 
     protected $casts = [
@@ -22,6 +25,9 @@ class ExamRecordAnswer extends Model
         'question_id' => 'integer',
         'is_correct' => 'boolean',
         'score' => 'decimal:2',
+        'client_updated_at' => 'integer',
+        'synced_at' => 'datetime',
+        'meta' => 'array',
     ];
 
     public function examRecord()

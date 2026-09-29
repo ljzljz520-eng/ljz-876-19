@@ -40,6 +40,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../../api'
 import { useModal } from '../../composables/useModal'
+import { getDeviceId } from '../../composables/useDeviceFingerprint'
 
 const router = useRouter()
 const { alert } = useModal()
@@ -59,7 +60,7 @@ onMounted(async () => {
 
 const startExam = async (paper) => {
   try {
-    const response = await api.post(`/exams/${paper.id}/start`)
+    await api.post(`/exams/${paper.id}/start`, { device_id: getDeviceId() })
     router.push(`/exams/${paper.id}`)
   } catch (e) {
     alert(e.response?.data?.message || '开始考试失败', '开始考试', 'error')

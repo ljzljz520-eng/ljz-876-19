@@ -52,7 +52,7 @@ api.interceptors.response.use(
       modalState.showConfirm = true
       modalState.confirmText = '确定'
       modalState.show = true
-    } else {
+    } else if (!error.config?._silent) {
       toastError(message)
     }
 

@@ -193,26 +193,57 @@ services:
               start_time TIMESTAMP NOT NULL COMMENT '开始时间',
               end_time TIMESTAMP NULL COMMENT '提交时间',
               score DECIMAL(5,2) DEFAULT 0.00 COMMENT '得分',
-              status ENUM('in_progress', 'submitted', 'graded') DEFAULT 'in_progress' COMMENT '状态',
+              status ENUM('in_progress', 'submitted', 'graded', 'awaiting_review', 'terminated') DEFAULT 'in_progress' COMMENT '状态: in_progress-进行中 submitted-已提交 graded-已评分 awaiting_review-待监考处理(超时/换设备) terminated-已终止',
+              deadline_at TIMESTAMP NULL COMMENT '当前应截止时间(含监考老师批准的延时)',
+              last_heartbeat_at TIMESTAMP NULL COMMENT '最近一次在线心跳时间',
+              offline_total INT DEFAULT 0 COMMENT '累计离线时长(秒),由断网/恢复事件结算',
+              device_id VARCHAR(64) NULL COMMENT '首个考试会话的设备指纹',
+              grace_until TIMESTAMP NULL COMMENT '断网宽限期截止时间(超过则转待处理)',
+              review_reason VARCHAR(100) NULL COMMENT '进入待处理状态的原因: timeout_overdue / device_switched 等',
+              reviewed_by BIGINT UNSIGNED NULL COMMENT '处理该记录的监考老师ID',
+              reviewed_at TIMESTAMP NULL COMMENT '监考处理时间',
+              review_remark VARCHAR(255) NULL COMMENT '监考处理备注',
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
               INDEX idx_user_id (user_id),
               INDEX idx_exam_paper_id (exam_paper_id),
-              INDEX idx_status (status)
+              INDEX idx_status (status),
+              INDEX idx_review (status, reviewed_by)
           ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='考试记录表';
 
           CREATE TABLE IF NOT EXISTS exam_record_answers (
               id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
               exam_record_id BIGINT UNSIGNED NOT NULL COMMENT '考试记录ID',
               question_id BIGINT UNSIGNED NOT NULL COMMENT '题目ID',
-              answer TEXT NOT NULL COMMENT '考生答案',
+              answer TEXT NULL COMMENT '考生答案(最新版本)',
               is_correct TINYINT(1) DEFAULT 0 COMMENT '是否正确: 1-正确 0-错误',
               score DECIMAL(5,2) DEFAULT 0.00 COMMENT '得分',
+              client_updated_at BIGINT NULL COMMENT '答案最近一次在考生端修改的本地时间戳(毫秒)',
+              synced_at TIMESTAMP NULL COMMENT '最近一次服务端同步时间',
+              meta JSON NULL COMMENT '附加信息(题目状态 unseen/viewed/answered/marked 等)',
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              UNIQUE KEY uk_record_question (exam_record_id, question_id),
               INDEX idx_exam_record_id (exam_record_id),
               INDEX idx_question_id (question_id)
           ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='考生答案表';
+
+          CREATE TABLE IF NOT EXISTS exam_events (
+              id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              exam_record_id BIGINT UNSIGNED NOT NULL COMMENT '考试记录ID',
+              user_id BIGINT UNSIGNED NOT NULL COMMENT '考生ID',
+              event_type VARCHAR(40) NOT NULL COMMENT '事件类型: heartbeat/offline_detected/reconnect/page_hidden/page_visible/page_refresh/session_resume/device_switch/answer_sync/submit/auto_submit/overdue/review_extend/review_terminate',
+              client_ts BIGINT NULL COMMENT '事件发生时的考生端本地时间戳(毫秒)',
+              server_ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '服务端接收时间',
+              device_id VARCHAR(64) NULL COMMENT '上报设备指纹',
+              is_online TINYINT(1) DEFAULT 1 COMMENT '上报时浏览器网络状态: 1-在线 0-离线缓存后补报',
+              duration INT NULL COMMENT '与上一状态的持续时长(秒),如离线时长、页面隐藏时长',
+              meta JSON NULL COMMENT '附加信息(浏览器环境、剩余秒数等)',
+              INDEX idx_exam_record_id (exam_record_id),
+              INDEX idx_user_id (user_id),
+              INDEX idx_event_type (event_type),
+              INDEX idx_server_ts (server_ts)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='考试过程事件表(断网/刷新/换设备甄别)';
 
           CREATE TABLE IF NOT EXISTS cache (
               `key` VARCHAR(255) NOT NULL PRIMARY KEY,
@@ -238,6 +269,18 @@ services:
       dockerfile: Dockerfile
     container_name: exam-backend
     restart: unless-stopped
+    # 启动时等待数据库就绪并应用(幂等)迁移，再启动服务
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "Waiting for database..."
+        until php -r "try { new PDO('mysql:host='.getenv('DB_HOST').';dbname='.getenv('DB_DATABASE'), getenv('DB_USERNAME'), getenv('DB_PASSWORD')); exit(0); } catch (Throwable \$e) { exit(1); }"; do
+          sleep 2
+        done
+        echo "Database ready, running migrations..."
+        php artisan migrate --force || echo "migrate skipped/failed"
+        exec php artisan serve --host=0.0.0.0 --port=8080
     environment:
       APP_NAME: ExamSystem
       APP_ENV: local

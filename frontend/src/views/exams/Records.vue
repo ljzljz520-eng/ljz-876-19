@@ -22,8 +22,8 @@
             <td class="px-6 py-4 whitespace-nowrap">{{ record.exam_paper?.title }}</td>
             <td class="px-6 py-4 whitespace-nowrap font-bold" :class="{'text-green-600': record.score >= 60, 'text-red-600': record.score < 60}">{{ record.score }} 分</td>
             <td class="px-6 py-4 whitespace-nowrap">
-              <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                {{ record.status === 'graded' ? '已评分' : record.status }}
+              <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="statusClass(record.status)">
+                {{ statusLabel(record.status) }}
               </span>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ new Date(record.created_at).toLocaleString() }}</td>
@@ -51,4 +51,20 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+const statusLabel = (s) => ({
+  graded: '已评分',
+  submitted: '已提交',
+  in_progress: '考试中(可继续)',
+  awaiting_review: '等待监考处理',
+  terminated: '已终止'
+}[s] || s)
+
+const statusClass = (s) => ({
+  graded: 'bg-green-100 text-green-800',
+  submitted: 'bg-blue-100 text-blue-800',
+  in_progress: 'bg-indigo-100 text-indigo-800',
+  awaiting_review: 'bg-yellow-100 text-yellow-800',
+  terminated: 'bg-red-100 text-red-800'
+}[s] || 'bg-gray-100 text-gray-800')
 </script>
