@@ -44,9 +44,65 @@ services:
             sleep 1
           done
 
+          # ---- 断网续考保护：幂等升级（旧库也会执行）----
+          mysql -h db -uroot -proot exam_system <<'UPGRADE_SQL'
+          SET NAMES utf8mb4;
+
+          CREATE TABLE IF NOT EXISTS exam_connection_events (
+              id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              exam_record_id BIGINT UNSIGNED NOT NULL COMMENT '考试记录ID',
+              event_type VARCHAR(30) NOT NULL COMMENT '事件类型: heartbeat-心跳 network_lost-断网 page_leave-离开/刷新 resume-恢复 device_switch-换设备 overtime_submit-超时提交',
+              device_id VARCHAR(64) NULL COMMENT '事件来源设备ID',
+              device_label VARCHAR(255) NULL COMMENT '设备描述(浏览器/系统)',
+              ip_address VARCHAR(45) NULL COMMENT 'IP地址',
+              user_agent VARCHAR(500) NULL COMMENT 'User-Agent',
+              client_time TIMESTAMP NULL COMMENT '学生端本地时间',
+              server_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '服务器接收时间',
+              reason VARCHAR(50) NULL COMMENT '细分原因: refresh-刷新 offline-断网',
+              risk_level ENUM('info', 'warning', 'danger') NOT NULL DEFAULT 'info' COMMENT '风险等级',
+              answer_snapshot JSON NULL COMMENT '当时答案/题目标记快照',
+              recovered_at TIMESTAMP NULL COMMENT '断网恢复时间(仅network_lost)',
+              offline_seconds INT UNSIGNED NULL COMMENT '本次断网持续秒数',
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_exam_record_id (exam_record_id),
+              INDEX idx_event_type (event_type),
+              INDEX idx_risk_level (risk_level),
+              INDEX idx_server_time (server_time)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='考试连接事件表(断网/刷新/换设备审计)';
+
+          CREATE TABLE IF NOT EXISTS exam_time_decisions (
+              id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              exam_record_id BIGINT UNSIGNED NOT NULL COMMENT '考试记录ID',
+              action ENUM('grant_extra', 'force_submit') NOT NULL COMMENT '监考决定: grant_extra-延时继续 force_submit-按已存答案收卷',
+              granted_seconds INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '本次批准延长秒数',
+              comment VARCHAR(500) NULL COMMENT '监考备注',
+              decided_by BIGINT UNSIGNED NOT NULL COMMENT '决定人(教师/管理员)ID',
+              decided_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '决定时间',
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_exam_record_id (exam_record_id),
+              INDEX idx_decided_by (decided_by)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='监考延时/收卷决定表';
+
+          SET @col_exists := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='exam_system' AND table_name='exam_records' AND column_name='device_id');
+          SET @sql := IF(@col_exists=0, 'ALTER TABLE exam_records ADD COLUMN device_id VARCHAR(64) NULL COMMENT ''当前考试设备ID(用于识别换设备)'' AFTER status', 'SELECT 1');
+          PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+          SET @col_exists := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='exam_system' AND table_name='exam_records' AND column_name='extra_time_seconds');
+          SET @sql := IF(@col_exists=0, 'ALTER TABLE exam_records ADD COLUMN extra_time_seconds INT UNSIGNED NOT NULL DEFAULT 0 COMMENT ''监考批准的延长时间(秒)'' AFTER device_id', 'SELECT 1');
+          PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+          SET @col_exists := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='exam_system' AND table_name='exam_records' AND column_name='time_check_status');
+          SET @sql := IF(@col_exists=0, 'ALTER TABLE exam_records ADD COLUMN time_check_status ENUM(''normal'',''pending_review'',''approved'',''denied'') NOT NULL DEFAULT ''normal'' COMMENT ''超时审核状态'' AFTER extra_time_seconds, ADD INDEX idx_time_check_status (time_check_status)', 'SELECT 1');
+          PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+          ALTER TABLE exam_records MODIFY COLUMN status ENUM('in_progress', 'submitted', 'graded', 'pending_review') DEFAULT 'in_progress' COMMENT '状态: pending_review-超时待监考审核';
+          UPGRADE_SQL
+
           table_exists=$$(mysql -h db -uroot -proot -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='exam_system' AND table_name='users';")
           if [ "$$table_exists" = "1" ]; then
-            echo "Database already initialized, skip seed."
+            echo "Database already initialized, upgrade SQL applied (idempotent)."
             exit 0
           fi
 
@@ -193,13 +249,54 @@ services:
               start_time TIMESTAMP NOT NULL COMMENT '开始时间',
               end_time TIMESTAMP NULL COMMENT '提交时间',
               score DECIMAL(5,2) DEFAULT 0.00 COMMENT '得分',
-              status ENUM('in_progress', 'submitted', 'graded') DEFAULT 'in_progress' COMMENT '状态',
+              status ENUM('in_progress', 'submitted', 'graded', 'pending_review') DEFAULT 'in_progress' COMMENT '状态: pending_review-超时待监考审核',
+              device_id VARCHAR(64) NULL COMMENT '当前考试设备ID(用于识别换设备)',
+              extra_time_seconds INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '监考老师批准的延长时间(秒)',
+              time_check_status ENUM('normal', 'pending_review', 'approved', 'denied') NOT NULL DEFAULT 'normal' COMMENT '超时审核状态',
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
               INDEX idx_user_id (user_id),
               INDEX idx_exam_paper_id (exam_paper_id),
-              INDEX idx_status (status)
+              INDEX idx_status (status),
+              INDEX idx_time_check_status (time_check_status)
           ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='考试记录表';
+
+          CREATE TABLE IF NOT EXISTS exam_connection_events (
+              id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              exam_record_id BIGINT UNSIGNED NOT NULL COMMENT '考试记录ID',
+              event_type VARCHAR(30) NOT NULL COMMENT '事件类型: heartbeat-心跳 network_lost-断网 page_leave-离开/刷新 resume-恢复 device_switch-换设备 overtime_submit-超时提交',
+              device_id VARCHAR(64) NULL COMMENT '事件来源设备ID',
+              device_label VARCHAR(255) NULL COMMENT '设备描述(浏览器/系统)',
+              ip_address VARCHAR(45) NULL COMMENT 'IP地址',
+              user_agent VARCHAR(500) NULL COMMENT 'User-Agent',
+              client_time TIMESTAMP NULL COMMENT '学生端本地时间',
+              server_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '服务器接收时间',
+              reason VARCHAR(50) NULL COMMENT '细分原因: refresh-刷新 offline-断网',
+              risk_level ENUM('info', 'warning', 'danger') NOT NULL DEFAULT 'info' COMMENT '风险等级',
+              answer_snapshot JSON NULL COMMENT '当时答案/题目标记快照',
+              recovered_at TIMESTAMP NULL COMMENT '断网恢复时间(仅network_lost)',
+              offline_seconds INT UNSIGNED NULL COMMENT '本次断网持续秒数',
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_exam_record_id (exam_record_id),
+              INDEX idx_event_type (event_type),
+              INDEX idx_risk_level (risk_level),
+              INDEX idx_server_time (server_time)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='考试连接事件表(断网/刷新/换设备审计)';
+
+          CREATE TABLE IF NOT EXISTS exam_time_decisions (
+              id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              exam_record_id BIGINT UNSIGNED NOT NULL COMMENT '考试记录ID',
+              action ENUM('grant_extra', 'force_submit') NOT NULL COMMENT '监考决定: grant_extra-延时继续 force_submit-按已存答案收卷',
+              granted_seconds INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '本次批准延长秒数',
+              comment VARCHAR(500) NULL COMMENT '监考备注',
+              decided_by BIGINT UNSIGNED NOT NULL COMMENT '决定人(教师/管理员)ID',
+              decided_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '决定时间',
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_exam_record_id (exam_record_id),
+              INDEX idx_decided_by (decided_by)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='监考延时/收卷决定表';
 
           CREATE TABLE IF NOT EXISTS exam_record_answers (
               id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

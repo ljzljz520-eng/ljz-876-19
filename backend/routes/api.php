@@ -12,6 +12,11 @@ Route::middleware('api')->prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
 });
 
+// 断网续考保护：页面刷新/关闭时由 fetch keepalive 携带 Sanctum token 上报（无状态，故放在 auth:sanctum 外）
+Route::middleware(['api', 'throttle:60,1'])->group(function () {
+    Route::post('/exams/{examPaper}/leave-beacon', [ExamController::class, 'leaveBeacon']);
+});
+
 Route::middleware(['api', 'auth:sanctum', 'throttle:60,1'])->group(function () {
     Route::prefix('auth')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
@@ -42,9 +47,15 @@ Route::middleware(['api', 'auth:sanctum', 'throttle:60,1'])->group(function () {
         Route::get('/', [ExamController::class, 'index']);
         Route::post('/{examPaper}/start', [ExamController::class, 'start']);
         Route::get('/{examPaper}/questions', [ExamController::class, 'getQuestions']);
+        Route::post('/{examPaper}/ping', [ExamController::class, 'ping']);
         Route::post('/{examPaper}/submit', [ExamController::class, 'submit']);
         Route::get('/records', [ExamController::class, 'myRecords']);
         Route::get('/records/{record}', [ExamController::class, 'showRecord']);
+
+        // 监考端：断网续考监控（教师限本人试卷，管理员全部）
+        Route::get('/monitor/records', [ExamController::class, 'monitorIndex']);
+        Route::get('/monitor/records/{record}', [ExamController::class, 'monitorShow']);
+        Route::post('/monitor/records/{record}/decision', [ExamController::class, 'monitorDecision']);
     });
 
     Route::prefix('scores')->group(function () {

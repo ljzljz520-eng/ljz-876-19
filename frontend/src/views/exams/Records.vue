@@ -15,18 +15,27 @@
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">得分</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">考试时间</th>
+            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
           </tr>
         </thead>
         <tbody class="bg-white divide-y divide-gray-200">
           <tr v-for="record in records" :key="record.id">
             <td class="px-6 py-4 whitespace-nowrap">{{ record.exam_paper?.title }}</td>
-            <td class="px-6 py-4 whitespace-nowrap font-bold" :class="{'text-green-600': record.score >= 60, 'text-red-600': record.score < 60}">{{ record.score }} 分</td>
+            <td class="px-6 py-4 whitespace-nowrap font-bold" :class="{'text-green-600': record.score >= 60, 'text-red-600': record.score < 60}">{{ ['graded', 'submitted'].includes(record.status) ? `${record.score} 分` : '—' }}</td>
             <td class="px-6 py-4 whitespace-nowrap">
-              <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                {{ record.status === 'graded' ? '已评分' : record.status }}
+              <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="statusClass(record)">
+                {{ statusLabel(record) }}
               </span>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ new Date(record.created_at).toLocaleString() }}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+              <router-link
+                v-if="['in_progress', 'pending_review'].includes(record.status)"
+                :to="`/exams/${record.exam_paper_id}`"
+                class="text-indigo-600 hover:text-indigo-800 font-medium">
+                {{ record.time_check_status === 'pending_review' ? '等待审核 / 刷新结果' : '继续考试' }}
+              </router-link>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -51,4 +60,18 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+function statusLabel(record) {
+  if (record.time_check_status === 'pending_review' || record.status === 'pending_review') return '超时待审核'
+  const map = { in_progress: '进行中', submitted: '已提交', graded: '已评分' }
+  return map[record.status] || record.status
+}
+
+function statusClass(record) {
+  if (record.time_check_status === 'pending_review' || record.status === 'pending_review') {
+    return 'bg-amber-100 text-amber-800'
+  }
+  if (record.status === 'in_progress') return 'bg-blue-100 text-blue-800'
+  return 'bg-green-100 text-green-800'
+}
 </script>

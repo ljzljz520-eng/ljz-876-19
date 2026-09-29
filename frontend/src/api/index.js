@@ -39,6 +39,11 @@ api.interceptors.response.use(
       return Promise.reject(error)
     }
 
+    // 心跳、断网重试等场景由调用方自行处理错误，不弹全局提示
+    if (error.config?.skipErrorMessage) {
+      return Promise.reject(error)
+    }
+
     const message = error.response?.data?.message ||
       error.response?.data?.error ||
       error.message ||

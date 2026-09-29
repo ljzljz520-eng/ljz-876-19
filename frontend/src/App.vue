@@ -107,9 +107,17 @@
               >
                 我的成绩
               </router-link>
-              <router-link 
-                v-if="authStore.isTeacher" 
-                to="/questions" 
+              <router-link
+                v-if="authStore.isTeacher"
+                to="/exam-monitor"
+                class="nav-link"
+                :class="{ 'nav-link-active': $route.path === '/exam-monitor' }"
+              >
+                断网监考
+              </router-link>
+              <router-link
+                v-if="authStore.isTeacher"
+                to="/questions"
                 class="nav-link"
                 :class="{ 'nav-link-active': $route.path === '/questions' }"
               >
@@ -155,6 +163,7 @@
         <div class="px-2 py-2 space-y-1">
           <router-link to="/exams" class="mobile-nav-link" :class="{ 'mobile-nav-link-active': $route.path === '/exams' }">在线考试</router-link>
           <router-link to="/records" class="mobile-nav-link" :class="{ 'mobile-nav-link-active': $route.path === '/records' }">我的成绩</router-link>
+          <router-link v-if="authStore.isTeacher" to="/exam-monitor" class="mobile-nav-link" :class="{ 'mobile-nav-link-active': $route.path === '/exam-monitor' }">断网监考</router-link>
           <router-link v-if="authStore.isTeacher" to="/questions" class="mobile-nav-link" :class="{ 'mobile-nav-link-active': $route.path === '/questions' }">题库管理</router-link>
           <router-link v-if="authStore.isTeacher" to="/exam-papers" class="mobile-nav-link" :class="{ 'mobile-nav-link-active': $route.path === '/exam-papers' }">试卷管理</router-link>
           <router-link v-if="authStore.isAdmin" to="/statistics" class="mobile-nav-link" :class="{ 'mobile-nav-link-active': $route.path === '/statistics' }">数据统计</router-link>

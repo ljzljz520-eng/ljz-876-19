@@ -33,6 +33,12 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/exam-monitor',
+    name: 'ExamMonitor',
+    component: () => import('../views/exams/Monitor.vue'),
+    meta: { requiresAuth: true, roles: ['admin', 'teacher'] }
+  },
+  {
     path: '/records',
     name: 'Records',
     component: () => import('../views/exams/Records.vue'),
